@@ -8,6 +8,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading.Tasks;
 using Dropbox.Api;
+using Dropbox.Api.Files;
 using Dropbox.Api.Sharing;
 using DropBoxSharedLineClone.Properties;
 
@@ -16,10 +17,10 @@ namespace DropBoxSharedLineClone
     partial class Program
     {
         // Add an ApiKey (from https://www.dropbox.com/developers/apps) here
-        private const string ApiKey = "xxx";
+        private const string ApiKey = "redacted";
 
         // Add an ApiSecret (from https://www.dropbox.com/developers/apps) here
-        private const string ApiSecret = "xxx";
+        private const string ApiSecret = "redacted";
 
         // This loopback host is for demo purpose. If this port is not
         // available on your machine you need to update this URL with an unused port.
@@ -65,18 +66,16 @@ namespace DropBoxSharedLineClone
             DropboxCertHelper.InitializeCertPinning();
 
             string[] scopeList = new string[] { "files.metadata.read", "files.content.read", "account_info.read", "sharing.read" };
-            var uid = await this.AcquireAccessToken( scopeList, IncludeGrantedScopes.None );
+            var uid = await AcquireAccessToken( scopeList, IncludeGrantedScopes.None );
             if ( string.IsNullOrEmpty( uid ) )
             {
                 return 1;
             }
 
-            // Specify socket level timeout which decides maximum waiting time when no bytes are
-            // received by the socket.
+            // Specify socket level timeout which decides maximum waiting time when no bytes are received by the socket.
             var httpClient = new HttpClient( new WebRequestHandler { ReadWriteTimeout = 10 * 1000 } )
             {
-                // Specify request level timeout which decides maximum time that can be spent on
-                // download/upload files.
+                // Specify request level timeout which decides maximum time that can be spent on download/upload files.
                 Timeout = TimeSpan.FromMinutes( 20 )
             };
 
@@ -91,38 +90,42 @@ namespace DropBoxSharedLineClone
                 var scopes = new string[] { "files.metadata.read", "files.content.read", "sharing.read" };
                 await client.RefreshAccessToken( scopes );
 
-                var sharedLinkUrl = "https://www.dropbox.com/sh/cinwirzj929lc9b/AABDC1VAdpyqCURnLzpFKTyta?dl=0";
-                Dropbox.Api.Sharing.GetSharedLinkMetadataArg arg = new Dropbox.Api.Sharing.GetSharedLinkMetadataArg( sharedLinkUrl );
-                var xxx = await client.Sharing.GetSharedLinkMetadataAsync( arg );
-                Console.WriteLine( $"Shared link name: {xxx.Name}" );
+                var sharedLinkUrl = "redacted";
+                GetSharedLinkMetadataArg arg = new GetSharedLinkMetadataArg( sharedLinkUrl );
+                var sharedLinkMetaData = await client.Sharing.GetSharedLinkMetadataAsync( arg );
+                Console.WriteLine( $"Shared link name: {sharedLinkMetaData.Name}" );
 
-                Dropbox.Api.Files.SharedLink sharedLink = new Dropbox.Api.Files.SharedLink( sharedLinkUrl );
-                Dropbox.Api.Files.ListFolderArg listFolderArg = new Dropbox.Api.Files.ListFolderArg( path: "", sharedLink: sharedLink );
+                var localDir = Path.Combine( Environment.GetFolderPath( Environment.SpecialFolder.MyDocuments ), sharedLinkMetaData.Name );
+                Directory.CreateDirectory( localDir );
+                Console.WriteLine( $"Shared link local folder: {localDir}" );
+
+                SharedLink sharedLink = new SharedLink( sharedLinkUrl );
+                ListFolderArg listFolderArg = new ListFolderArg( path: "", sharedLink: sharedLink );
                 var listFiles = await client.Files.ListFolderAsync( listFolderArg );
                 foreach ( var listFile in listFiles.Entries )
                 {
                     try
                     {
-                        //Console.WriteLine( $"  File name: {listFile.Name}" );
+                        Console.WriteLine( $"Processing: {listFile.Name}" );
                         var remoteFile = listFile.AsFile;
-                        var localFile = Path.Combine( @".\Temp", listFile.Name );
+                        var localFile = Path.Combine( localDir, listFile.Name );
 
                         if ( File.Exists( localFile ) )
                         {
                             var localTimestamp = File.GetLastWriteTimeUtc( localFile );
-                            Console.WriteLine( $"Testing {remoteFile.ServerModified} with {localTimestamp}" );
+                            Console.WriteLine( $"  Checking {remoteFile.ServerModified} with {localTimestamp}" );
                             if ( DateTime.Compare( remoteFile.ServerModified, localTimestamp ) == 0 )
                             {
-                                Console.WriteLine( $"Skipping unchanged file: {listFile.Name}" );
+                                Console.WriteLine( $"  Skipping unchanged file: {listFile.Name}" );
                                 continue;
                             }
                         }
                         GetSharedLinkMetadataArg downloadArg = new GetSharedLinkMetadataArg( sharedLinkUrl, $"/{listFile.Name}" );
-                        Console.WriteLine( $"sharedLinkUrl: {sharedLinkUrl}" );
-                        Console.WriteLine( $"    file.Name: /{listFile.Name}" );
+                        Console.WriteLine( $"SharedLinkUrl: {sharedLinkUrl}" );
+                        Console.WriteLine( $"    File Name: {listFile.Name}" );
                         var download = await client.Sharing.GetSharedLinkFileAsync( downloadArg );
 
-                        Console.WriteLine( $"  downloading: {remoteFile.Name}" );
+                        Console.WriteLine( $"  Downloading: {remoteFile.Name}" );
                         using ( var ms = new MemoryStream() )
                         {
                             var bytes = await download.GetContentAsByteArrayAsync();
@@ -144,35 +147,7 @@ namespace DropBoxSharedLineClone
                     }
                 }
 
-                if ( true )
-                {
-                    return 0;
-                }
-
-
-
-
-                // This call should succeed since the correct scope has been acquired
-                await GetCurrentAccount( client );
-
-                Console.WriteLine( "Refreshing without scope account_info.read" );
-                var newScopes = new string[] { "files.metadata.read", "files.content.read" };
-                await client.RefreshAccessToken( newScopes );
-                try
-                {
-                    // This should fail since token does not have "account_info.read" scope  
-                    await GetCurrentAccount( client );
-                }
-                catch ( Exception )
-                {
-                    Console.WriteLine( "Correctly failed with invalid scope" );
-                }
-                Console.WriteLine( "Attempting to try again with include_granted_scopes" );
-                await this.AcquireAccessToken( newScopes, IncludeGrantedScopes.User );
-                var clientNew = new DropboxClient( Settings.Default.AccessToken, Settings.Default.RefreshToken, ApiKey, ApiSecret, config );
-                await GetCurrentAccount( clientNew );
-
-                Console.WriteLine( "Oauth Test Complete!" );
+                Console.WriteLine( "Download complete!" );
                 Console.WriteLine( "Exit with any key" );
                 Console.ReadKey();
             }
