@@ -16,12 +16,6 @@ namespace DropBoxSharedLineClone
 {
     partial class Program
     {
-        // Add an ApiKey (from https://www.dropbox.com/developers/apps) here
-        private const string ApiKey = "redacted";
-
-        // Add an ApiSecret (from https://www.dropbox.com/developers/apps) here
-        private const string ApiSecret = "redacted";
-
         // This loopback host is for demo purpose. If this port is not
         // available on your machine you need to update this URL with an unused port.
         private const string LoopbackHost = "http://127.0.0.1:52475/";
@@ -86,68 +80,90 @@ namespace DropBoxSharedLineClone
                     HttpClient = httpClient
                 };
 
-                var client = new DropboxClient( Settings.Default.AccessToken, Settings.Default.RefreshToken, ApiKey, ApiSecret, config );
+                var client = new DropboxClient( Settings.Default.AccessToken, Settings.Default.RefreshToken, Settings.Default.ApiKey, Settings.Default.ApiSecret, config );
                 var scopes = new string[] { "files.metadata.read", "files.content.read", "sharing.read" };
                 await client.RefreshAccessToken( scopes );
 
-                var sharedLinkUrl = "redacted";
-                GetSharedLinkMetadataArg arg = new GetSharedLinkMetadataArg( sharedLinkUrl );
-                var sharedLinkMetaData = await client.Sharing.GetSharedLinkMetadataAsync( arg );
-                Console.WriteLine( $"Shared link name: {sharedLinkMetaData.Name}" );
-
-                var localDir = Path.Combine( Environment.GetFolderPath( Environment.SpecialFolder.MyDocuments ), sharedLinkMetaData.Name );
-                Directory.CreateDirectory( localDir );
-                Console.WriteLine( $"Shared link local folder: {localDir}" );
-
-                SharedLink sharedLink = new SharedLink( sharedLinkUrl );
-                ListFolderArg listFolderArg = new ListFolderArg( path: "", sharedLink: sharedLink );
-                var listFiles = await client.Files.ListFolderAsync( listFolderArg );
-                foreach ( var listFile in listFiles.Entries )
+                if ( Settings.Default.SharedLinks == null || Settings.Default.SharedLinks.Count == 0 )
                 {
-                    try
-                    {
-                        Console.WriteLine( $"Processing: {listFile.Name}" );
-                        var remoteFile = listFile.AsFile;
-                        var localFile = Path.Combine( localDir, listFile.Name );
+                    Settings.Default.SharedLinks = new System.Collections.Specialized.StringCollection();
 
-                        if ( File.Exists( localFile ) )
-                        {
-                            var localTimestamp = File.GetLastWriteTimeUtc( localFile );
-                            Console.WriteLine( $"  Checking {remoteFile.ServerModified} with {localTimestamp}" );
-                            if ( DateTime.Compare( remoteFile.ServerModified, localTimestamp ) == 0 )
-                            {
-                                Console.WriteLine( $"  Skipping unchanged file: {listFile.Name}" );
-                                continue;
-                            }
-                        }
-                        GetSharedLinkMetadataArg downloadArg = new GetSharedLinkMetadataArg( sharedLinkUrl, $"/{listFile.Name}" );
-                        Console.WriteLine( $"SharedLinkUrl: {sharedLinkUrl}" );
-                        Console.WriteLine( $"    File Name: {listFile.Name}" );
-                        var download = await client.Sharing.GetSharedLinkFileAsync( downloadArg );
-
-                        Console.WriteLine( $"  Downloading: {remoteFile.Name}" );
-                        using ( var ms = new MemoryStream() )
-                        {
-                            var bytes = await download.GetContentAsByteArrayAsync();
-                            if ( bytes.Length > 0 )
-                            {
-                                File.WriteAllBytes( localFile, bytes.ToArray() );
-                                File.SetCreationTimeUtc( localFile, remoteFile.ServerModified );
-                                File.SetLastWriteTimeUtc( localFile, remoteFile.ServerModified );
-                            }
-                            else
-                            {
-                                Console.Error.WriteLine( $"No bytes downloaded" );
-                            }
-                        }
-                    }
-                    catch ( Exception ex )
+                    Console.Write( "Shared link: " );
+                    var line = Console.ReadLine();
+                    while( line.Length > 0 )
                     {
-                        Console.Error.WriteLine( $"Failed during download: ${ex.Message}" );
+                        Settings.Default.SharedLinks.Add( line );
+
+                        Console.Write( "Shared link (leave blank to finish): " );
+                        line = Console.ReadLine();
                     }
+                    Settings.Default.Save();
                 }
 
-                Console.WriteLine( "Download complete!" );
+                var sharedLinks = Settings.Default.SharedLinks;
+                foreach ( var sharedLinkUrl in sharedLinks )
+                {
+                    //var sharedLinkUrl = "https://www.dropbox.com/sh/ondt7troa7kjsqy/AADcwLDfVZGnbZP6FIwxQKsma?dl=0";
+                    //var sharedLinkUrl = "https://www.dropbox.com/sh/cinwirzj929lc9b/AABDC1VAdpyqCURnLzpFKTyta?dl=0";
+                    GetSharedLinkMetadataArg arg = new GetSharedLinkMetadataArg( sharedLinkUrl );
+                    var sharedLinkMetaData = await client.Sharing.GetSharedLinkMetadataAsync( arg );
+                    Console.WriteLine( $"Shared link name: {sharedLinkMetaData.Name}" );
+
+                    var localDir = Path.Combine( Environment.GetFolderPath( Environment.SpecialFolder.MyDocuments ), sharedLinkMetaData.Name );
+                    Directory.CreateDirectory( localDir );
+                    Console.WriteLine( $"Shared link local folder: {localDir}" );
+
+                    SharedLink sharedLink = new SharedLink( sharedLinkUrl );
+                    ListFolderArg listFolderArg = new ListFolderArg( path: "", sharedLink: sharedLink );
+                    var listFiles = await client.Files.ListFolderAsync( listFolderArg );
+                    foreach ( var listFile in listFiles.Entries )
+                    {
+                        try
+                        {
+                            Console.WriteLine( $"Processing: {listFile.Name}" );
+                            var remoteFile = listFile.AsFile;
+                            var localFile = Path.Combine( localDir, listFile.Name );
+
+                            if ( File.Exists( localFile ) )
+                            {
+                                var localTimestamp = File.GetLastWriteTimeUtc( localFile );
+                                Console.WriteLine( $"  Checking {remoteFile.ServerModified} with {localTimestamp}" );
+                                if ( DateTime.Compare( remoteFile.ServerModified, localTimestamp ) == 0 )
+                                {
+                                    Console.WriteLine( $"  Skipping unchanged file: {listFile.Name}" );
+                                    continue;
+                                }
+                            }
+                            GetSharedLinkMetadataArg downloadArg = new GetSharedLinkMetadataArg( sharedLinkUrl, $"/{listFile.Name}" );
+                            Console.WriteLine( $"SharedLinkUrl: {sharedLinkUrl}" );
+                            Console.WriteLine( $"    File Name: {listFile.Name}" );
+                            var download = await client.Sharing.GetSharedLinkFileAsync( downloadArg );
+
+                            Console.WriteLine( $"  Downloading: {remoteFile.Name}" );
+                            using ( var ms = new MemoryStream() )
+                            {
+                                var bytes = await download.GetContentAsByteArrayAsync();
+                                if ( bytes.Length > 0 )
+                                {
+                                    File.WriteAllBytes( localFile, bytes.ToArray() );
+                                    File.SetCreationTimeUtc( localFile, remoteFile.ServerModified );
+                                    File.SetLastWriteTimeUtc( localFile, remoteFile.ServerModified );
+                                }
+                                else
+                                {
+                                    Console.Error.WriteLine( $"No bytes downloaded" );
+                                }
+                            }
+                        }
+                        catch ( Exception ex )
+                        {
+                            Console.Error.WriteLine( $"Failed during download: ${ex.Message}" );
+                        }
+                    }
+
+                    Console.WriteLine( "Download complete!" );
+                }
+                Console.WriteLine( "All downloads complete!" );
                 Console.WriteLine( "Exit with any key" );
                 Console.ReadKey();
             }
@@ -226,12 +242,27 @@ namespace DropBoxSharedLineClone
         /// <returns>A valid uid if a token was acquired or null.</returns>
         private async Task<string> AcquireAccessToken( string[] scopeList, IncludeGrantedScopes includeGrantedScopes )
         {
-            Console.Write( "Reset settings (Y/N) " );
-            if ( Console.ReadKey().Key == ConsoleKey.Y )
+            /*
+             * Not neccessary in normal processing, but a useful code block to have
+             * 
+                Console.Write( "Reset settings (Y/N) " );
+                if ( Console.ReadKey().Key == ConsoleKey.Y )
+                {
+                    Settings.Default.Reset();
+                }
+                Console.WriteLine();
+             */
+
+            if ( string.IsNullOrEmpty( Settings.Default.ApiSecret ) )
             {
-                Settings.Default.Reset();
+                Console.Write( "API Key: " );
+                Settings.Default.ApiKey = Console.ReadLine();
+
+                Console.Write( "API Secret Key: " );
+                Settings.Default.ApiSecret = Console.ReadLine();
+
+                Settings.Default.Save();
             }
-            Console.WriteLine();
 
             var accessToken = Settings.Default.AccessToken;
             var refreshToken = Settings.Default.RefreshToken;
@@ -242,7 +273,7 @@ namespace DropBoxSharedLineClone
                 {
                     Console.WriteLine( "Waiting for credentials." );
                     var state = Guid.NewGuid().ToString( "N" );
-                    var authorizeUri = DropboxOAuth2Helper.GetAuthorizeUri( OAuthResponseType.Code, ApiKey, RedirectUri, state: state, tokenAccessType: TokenAccessType.Offline, scopeList: scopeList, includeGrantedScopes: includeGrantedScopes );
+                    var authorizeUri = DropboxOAuth2Helper.GetAuthorizeUri( OAuthResponseType.Code, Settings.Default.ApiKey, RedirectUri, state: state, tokenAccessType: TokenAccessType.Offline, scopeList: scopeList, includeGrantedScopes: includeGrantedScopes );
                     var http = new HttpListener();
                     http.Prefixes.Add( LoopbackHost );
 
@@ -257,13 +288,15 @@ namespace DropBoxSharedLineClone
                     var redirectUri = await HandleJSRedirect( http );
 
                     Console.WriteLine( "Exchanging code for token" );
-                    var tokenResult = await DropboxOAuth2Helper.ProcessCodeFlowAsync( redirectUri, ApiKey, ApiSecret, RedirectUri.ToString(), state );
+                    var tokenResult = await DropboxOAuth2Helper.ProcessCodeFlowAsync( redirectUri, Settings.Default.ApiKey, Settings.Default.ApiSecret, RedirectUri.ToString(), state );
                     Console.WriteLine( "Finished Exchanging Code for Token" );
+
                     // Bring console window to the front.
                     SetForegroundWindow( GetConsoleWindow() );
                     accessToken = tokenResult.AccessToken;
                     refreshToken = tokenResult.RefreshToken;
                     var uid = tokenResult.Uid;
+
                     Console.WriteLine( "Uid: {0}", uid );
                     Console.WriteLine( "AccessToken: {0}", accessToken );
                     if ( tokenResult.RefreshToken != null )
@@ -282,6 +315,7 @@ namespace DropBoxSharedLineClone
                     Settings.Default.AccessToken = accessToken;
                     Settings.Default.Uid = uid;
                     Settings.Default.Save();
+
                     http.Stop();
                     return uid;
                 }
