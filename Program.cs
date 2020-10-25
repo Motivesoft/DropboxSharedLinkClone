@@ -27,6 +27,9 @@ namespace DropBoxSharedLineClone
         // URL to receive access token from JS.
         private readonly Uri JSRedirectUri = new Uri( LoopbackHost + "token" );
 
+        private bool Verbose;
+
+        private bool PromptToExit;
 
         [DllImport( "kernel32.dll", ExactSpelling = true )]
         private static extern IntPtr GetConsoleWindow();
@@ -41,18 +44,96 @@ namespace DropBoxSharedLineClone
             var instance = new Program();
             try
             {
-                Console.WriteLine( "Example OAuth Application" );
-                var task = Task.Run( (Func<Task<int>>) instance.Run );
+                bool verboseMode = false;
+                bool promptToExit = true;
+                bool process = true;
+                foreach ( var arg in args )
+                {
+                    // Look for - or / or --
+                    if ( arg.StartsWith( "/" ) || arg.StartsWith( "-" ) )
+                    {
+                        var argument = arg.Substring(1).ToLowerInvariant();
+                        if ( argument.Equals( "v" ) || argument.Equals( "-verbose" ) )
+                        {
+                            Console.WriteLine( "Verbose mode" );
+                            verboseMode = true;
+                        }
+                        else if ( argument.Equals( "np" ) || argument.Equals( "-no-prompt" ) )
+                        {
+                            if ( verboseMode )
+                            {
+                                Console.WriteLine( "No prompt on exit" );
+                            }
+                            promptToExit = false;
+                        }
+                        else if ( argument.Equals( "ra" ) || argument.Equals( "-reset-all" ) )
+                        {
+                            if ( verboseMode )
+                            {
+                                Console.WriteLine( "Reset all settings" );
+                            }
+                            Settings.Default.Reset();
+                        }
+                        else if ( argument.Equals( "rsl" ) || argument.Equals( "-reset-shared-links" ) )
+                        {
+                            if ( verboseMode )
+                            {
+                                Console.WriteLine( "Reset all shared links" );
+                            }
+                            Settings.Default.SharedLinks.Clear();
+                        }
+                        else if ( argument.Equals( "?" ) || argument.Equals( "h" ) || argument.Equals( "-help" ) )
+                        {
+                            ShowHelp();
+                            process = false;
+                        }
+                        else
+                        {
+                            Console.WriteLine( $"Unknown command line argument: {arg}" );
+                            ShowHelp();
+                            process = false;
+                        }
+                    }
+                }
 
-                task.Wait();
+                if ( process )
+                {
+                    if ( verboseMode )
+                    {
+                        Console.WriteLine( "Starting..." );
+                    }
+                    instance.Verbose = verboseMode;
+                    instance.PromptToExit = promptToExit;
+                    var task = Task.Run( (Func<Task<int>>) instance.Run );
 
-                return task.Result;
+                    task.Wait();
+
+                    return task.Result;
+                }
+
+                return 1;
             }
             catch ( Exception e )
             {
                 Console.WriteLine( e );
                 throw e;
             }
+        }
+
+        private static void ShowHelp()
+        {
+            Console.WriteLine();
+            Console.WriteLine( "Clone the files from a Dropbox shared link folder to a local folder" );
+            Console.WriteLine();
+            Console.WriteLine( "Launch with no arguments to clone shared link folders. You will be prompted for any required configuration" );
+            Console.WriteLine();
+            Console.WriteLine( "Or launch with these arguments:");
+            Console.WriteLine( "  -v, --verbose                  display verbose information" );
+            Console.WriteLine( "  -np, --no-prompt               don't prompt the user to press a key on exit" );
+            Console.WriteLine( "  -ra, --reset-all               reset all configuration");
+            Console.WriteLine( "  -rsl, --reset-shared-links     reset shared link folder configuration only" );
+            Console.WriteLine();
+            Console.WriteLine( "After any sort of configuration reset, you will then be prompted to re-enter the details" );
         }
 
         private async Task<int> Run()
@@ -88,13 +169,13 @@ namespace DropBoxSharedLineClone
                 {
                     Settings.Default.SharedLinks = new System.Collections.Specialized.StringCollection();
 
-                    Console.Write( "Shared link: " );
+                    Console.Write( "Shared link URL: " );
                     var line = Console.ReadLine();
                     while( line.Length > 0 )
                     {
                         Settings.Default.SharedLinks.Add( line );
 
-                        Console.Write( "Shared link (leave blank to finish): " );
+                        Console.Write( "Additional shared link URL (leave blank to finish): " );
                         line = Console.ReadLine();
                     }
                     Settings.Default.Save();
@@ -103,15 +184,17 @@ namespace DropBoxSharedLineClone
                 var sharedLinks = Settings.Default.SharedLinks;
                 foreach ( var sharedLinkUrl in sharedLinks )
                 {
-                    //var sharedLinkUrl = "https://www.dropbox.com/sh/ondt7troa7kjsqy/AADcwLDfVZGnbZP6FIwxQKsma?dl=0";
-                    //var sharedLinkUrl = "https://www.dropbox.com/sh/cinwirzj929lc9b/AABDC1VAdpyqCURnLzpFKTyta?dl=0";
                     GetSharedLinkMetadataArg arg = new GetSharedLinkMetadataArg( sharedLinkUrl );
                     var sharedLinkMetaData = await client.Sharing.GetSharedLinkMetadataAsync( arg );
-                    Console.WriteLine( $"Shared link name: {sharedLinkMetaData.Name}" );
 
                     var localDir = Path.Combine( Environment.GetFolderPath( Environment.SpecialFolder.MyDocuments ), sharedLinkMetaData.Name );
                     Directory.CreateDirectory( localDir );
-                    Console.WriteLine( $"Shared link local folder: {localDir}" );
+
+                    Console.WriteLine( $"Processing shared link name: {sharedLinkMetaData.Name}" );
+                    if ( Verbose )
+                    {
+                        Console.WriteLine( $"Shared link local folder: {localDir}" );
+                    }
 
                     SharedLink sharedLink = new SharedLink( sharedLinkUrl );
                     ListFolderArg listFolderArg = new ListFolderArg( path: "", sharedLink: sharedLink );
@@ -120,23 +203,52 @@ namespace DropBoxSharedLineClone
                     {
                         try
                         {
-                            Console.WriteLine( $"Processing: {listFile.Name}" );
-                            var remoteFile = listFile.AsFile;
-                            var localFile = Path.Combine( localDir, listFile.Name );
+                            if ( Verbose )
+                            {
+                                Console.WriteLine( $"Processing: {listFile.Name}" );
+                            }
 
+                            // Get the remote object details
+                            var remoteFile = listFile.AsFile;
+
+                            // Construct a reference to the local equivalent
+                            var localFile = Path.Combine( localDir, listFile.Name );
+                            if ( Verbose )
+                            {
+                                Console.WriteLine( $"  Local filename: {localFile}" );
+                            }
+
+                            // Do we have a file already
                             if ( File.Exists( localFile ) )
                             {
+                                if ( Verbose )
+                                {
+                                    Console.WriteLine( $"  Local file exists. Comparing timestamp" );
+                                }
+
                                 var localTimestamp = File.GetLastWriteTimeUtc( localFile );
-                                Console.WriteLine( $"  Checking {remoteFile.ServerModified} with {localTimestamp}" );
+
+                                if ( Verbose )
+                                {
+                                    Console.WriteLine( $"  Checking {remoteFile.ServerModified} with {localTimestamp}" );
+                                }
+
                                 if ( DateTime.Compare( remoteFile.ServerModified, localTimestamp ) == 0 )
                                 {
-                                    Console.WriteLine( $"  Skipping unchanged file: {listFile.Name}" );
+                                    if ( Verbose )
+                                    {
+                                        Console.WriteLine( $"  Skipping unchanged file: {listFile.Name}" );
+                                    }
                                     continue;
                                 }
                             }
+
                             GetSharedLinkMetadataArg downloadArg = new GetSharedLinkMetadataArg( sharedLinkUrl, $"/{listFile.Name}" );
-                            Console.WriteLine( $"SharedLinkUrl: {sharedLinkUrl}" );
-                            Console.WriteLine( $"    File Name: {listFile.Name}" );
+                            if ( Verbose )
+                            {
+                                Console.WriteLine( $"SharedLinkUrl: {sharedLinkUrl}" );
+                                Console.WriteLine( $"    File Name: {listFile.Name}" );
+                            }
                             var download = await client.Sharing.GetSharedLinkFileAsync( downloadArg );
 
                             Console.WriteLine( $"  Downloading: {remoteFile.Name}" );
@@ -161,11 +273,22 @@ namespace DropBoxSharedLineClone
                         }
                     }
 
-                    Console.WriteLine( "Download complete!" );
+                    if ( Verbose )
+                    {
+                        Console.WriteLine( "Download complete!" );
+                    }
                 }
-                Console.WriteLine( "All downloads complete!" );
-                Console.WriteLine( "Exit with any key" );
-                Console.ReadKey();
+
+                if ( Verbose )
+                {
+                    Console.WriteLine( "All downloads complete!" );
+                }
+
+                if ( PromptToExit )
+                {
+                    Console.WriteLine( "Exit with any key" );
+                    Console.ReadKey();
+                }
             }
             catch ( HttpException e )
             {
