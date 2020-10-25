@@ -32,5 +32,14 @@ When next launched, the utility will probably not need to prompt for anything, b
 * There should be a better way to control the list of shared link folders to use. Currently, there is no simple way to maintain this list
 
 ## Change log
+### 1.0.1.0
+* Reduced the amount of textual output during operation of the utility
+* Added command line options for the following features:
+    * -h, --help<br>Display help information
+    * -v, --verbose<br>Display verbose progress information
+    * -np, --no-prompt<br>Do not wait for a keypress before exit
+    * -ra, --reset-all<br>Delete all configuration and prompt for it to be entered again
+    * -rsl, --reset-shared-links<br>Delete all shared link folder configuration and prompt for it to be entered again
+
 ### 1.0.0.4
 * First version considered usable on a clean machine. Install the executable and follow the [Usage](#usage) instructions.
